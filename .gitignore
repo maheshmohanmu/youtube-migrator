@@ -1,0 +1,18 @@
+# Google OAuth tokens — contain your account access, never commit these
+client_secrets.json
+token_source.pkl
+token_dest.pkl
+
+# YT Music session headers — contain your browser cookies, never commit these
+ytmusic_source_headers.json
+ytmusic_dest_headers.json
+
+# Exported data — contains your personal YouTube library, keep private
+yt_migration_export/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/

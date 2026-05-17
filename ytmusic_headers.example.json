@@ -1,0 +1,14 @@
+{
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9",
+    "authorization": "SAPISIDHASH 0000000000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_u SAPISID1PHASH 0000000000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_u SAPISID3PHASH 0000000000_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_u",
+    "cookie": "YSC=XXXXXXXXXXXX; SOCS=XXXXXXXXXXXX; VISITOR_INFO1_LIVE=XXXXXXXXXXXX; VISITOR_PRIVACY_METADATA=XXXXXXXXXXXX; __Secure-ROLLOUT_TOKEN=XXXXXXXXXXXX; __Secure-1PSIDTS=sidts-XXXXXXXXXXXX; __Secure-3PSIDTS=sidts-XXXXXXXXXXXX; HSID=XXXXXXXXXXXX; SSID=XXXXXXXXXXXX; APISID=XXXXXXXXXXXX; SAPISID=XXXXXXXXXXXX; __Secure-1PAPISID=XXXXXXXXXXXX; __Secure-3PAPISID=XXXXXXXXXXXX; SID=XXXXXXXXXXXX; __Secure-1PSID=XXXXXXXXXXXX; __Secure-3PSID=XXXXXXXXXXXX; LOGIN_INFO=XXXXXXXXXXXX; PREF=f6=40000000; CONSISTENCY=XXXXXXXXXXXX; SIDCC=XXXXXXXXXXXX; __Secure-1PSIDCC=XXXXXXXXXXXX; __Secure-3PSIDCC=XXXXXXXXXXXX",
+    "origin": "https://music.youtube.com",
+    "referer": "https://music.youtube.com/",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "x-goog-authuser": "0",
+    "x-goog-visitor-id": "XXXXXXXXXXXX",
+    "x-origin": "https://music.youtube.com",
+    "x-youtube-client-name": "67",
+    "x-youtube-client-version": "1.20260512.07.00"
+}
