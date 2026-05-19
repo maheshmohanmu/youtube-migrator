@@ -183,7 +183,7 @@ def import_subscriptions(yt, subs: list[dict]):
             save_progress(progress)
             log.info(f"  ✓ Subscribed: {sub['title']}")
         except googleapiclient.errors.HttpError as e:
-            if e.resp.status == 409:   # already subscribed
+            if e.resp.status == 409 or (e.resp.status == 400 and "subscriptionDuplicate" in str(e)):
                 skipped += 1
                 done_ids.add(sub["channelId"])
                 progress["subs_done"] = list(done_ids)
