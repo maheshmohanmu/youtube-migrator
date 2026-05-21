@@ -27,10 +27,17 @@ Migrate subscriptions, liked videos, playlists, and YouTube Music library (liked
 python3 --version
 ```
 
-### 2. Install dependencies
+### 2. Create a virtual environment and install dependencies
 ```bash
+python3 -m venv venv
+source venv/bin/activate          # macOS/Linux
+# venv\Scripts\activate           # Windows
+
 pip install google-auth-oauthlib google-auth-httplib2 google-api-python-client ytmusicapi
 ```
+
+> **Always activate the venv before running the script** (`source venv/bin/activate`).  
+> Run `deactivate` when you're done.
 
 ---
 
@@ -100,7 +107,8 @@ print('Dest playlists:', [p['title'] for p in pls])
 ## Running the migration
 
 ```bash
-python3 migrate.py
+source venv/bin/activate   # if not already active
+./migrate.py
 ```
 
 Choose a mode:
