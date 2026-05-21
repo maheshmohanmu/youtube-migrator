@@ -23,7 +23,16 @@ SCOPES_WRITE = ["https://www.googleapis.com/auth/youtube.force-ssl"]
 API_SERVICE   = "youtube"
 API_VERSION   = "v3"
 EXPORT_DIR  = Path("yt_migration_export")
-IMPORT_DELAY = 0.5   # seconds between write calls (avoid quota bursts)
+IMPORT_DELAY = 1.5   # seconds between write calls (avoid quota bursts)
+
+# YouTube Data API v3 quota constants
+# subscriptions.insert = 50 units, videos.rate = 50 units, playlistItems.insert = 50 units
+# Daily limit = 10,000 units. Quota resets at midnight Pacific Time (PT).
+QUOTA_PER_SUBSCRIPTION = 50
+QUOTA_PER_VIDEO_RATE   = 50
+QUOTA_PER_PLAYLIST_INSERT = 50
+# Conservative budget: use at most 8,000 units per run (leaves buffer for retries / other ops)
+DAILY_QUOTA_BUDGET = 8_000
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 # ─────────────────────────────────────────
@@ -159,8 +168,7 @@ def is_quota_error(e) -> bool:
 # ─────────────────────────────────────────
 # YOUTUBE DATA API — IMPORT
 # ─────────────────────────────────────────
-def import_subscriptions(yt, subs: list[dict]):
-    """Subscribe to all channels. Skips already-done, stops on quota."""
+def import_subscriptions(yt, subs: list[dict], quota_tracker: dict):
     progress = load_progress()
     done_ids = set(progress.get("subs_done", []))
 
@@ -169,6 +177,14 @@ def import_subscriptions(yt, subs: list[dict]):
 
     ok, skipped, failed = 0, 0, 0
     for sub in pending:
+        if quota_tracker["used"] + QUOTA_PER_SUBSCRIPTION > quota_tracker["budget"]:
+            log.warning(
+                f"  ⚠ Reached daily budget ({quota_tracker['budget']} units) after {ok} subscriptions. "
+                f"Re-run after midnight PT to continue."
+            )
+            log.info(f"  → Subscriptions so far: {ok} added, {skipped} skipped, {failed} failed")
+            raise SystemExit(0)
+
         try:
             yt.subscriptions().insert(
                 part="snippet",
@@ -177,11 +193,12 @@ def import_subscriptions(yt, subs: list[dict]):
                     "channelId": sub["channelId"],
                 }}}
             ).execute()
+            quota_tracker["used"] += QUOTA_PER_SUBSCRIPTION
             ok += 1
             done_ids.add(sub["channelId"])
             progress["subs_done"] = list(done_ids)
             save_progress(progress)
-            log.info(f"  ✓ Subscribed: {sub['title']}")
+            log.info(f"  ✓ Subscribed: {sub['title']}  (quota used: {quota_tracker['used']}/{quota_tracker['budget']})")
         except googleapiclient.errors.HttpError as e:
             if e.resp.status == 409 or (e.resp.status == 400 and "subscriptionDuplicate" in str(e)):
                 skipped += 1
@@ -189,7 +206,7 @@ def import_subscriptions(yt, subs: list[dict]):
                 progress["subs_done"] = list(done_ids)
                 save_progress(progress)
             elif is_quota_error(e):
-                log.warning(f"  ⚠ Quota exhausted after {ok} subscriptions. Resume tomorrow.")
+                log.warning(f"  ⚠ API quota exhausted after {ok} subscriptions. Re-run after midnight PT.")
                 log.info(f"  → Subscriptions so far: {ok} added, {skipped} skipped, {failed} failed")
                 log.info(f"  → Progress saved. Re-run tomorrow to continue from where you left off.")
                 raise SystemExit(1)
@@ -200,8 +217,7 @@ def import_subscriptions(yt, subs: list[dict]):
 
     log.info(f"  → Subscriptions: {ok} added, {skipped} already existed, {failed} failed")
 
-def import_liked_videos(yt, videos: list[dict]):
-    """Like all videos. Skips already-done, stops on quota."""
+def import_liked_videos(yt, videos: list[dict], quota_tracker: dict):
     progress = load_progress()
     done_ids = set(progress.get("videos_done", []))
 
@@ -210,16 +226,24 @@ def import_liked_videos(yt, videos: list[dict]):
 
     ok, failed = 0, 0
     for v in pending:
+        if quota_tracker["used"] + QUOTA_PER_VIDEO_RATE > quota_tracker["budget"]:
+            log.warning(
+                f"  ⚠ Reached daily budget ({quota_tracker['budget']} units) after {ok} liked videos. "
+                f"Re-run after midnight PT to continue."
+            )
+            raise SystemExit(0)
+
         try:
             yt.videos().rate(id=v["videoId"], rating="like").execute()
+            quota_tracker["used"] += QUOTA_PER_VIDEO_RATE
             ok += 1
             done_ids.add(v["videoId"])
             progress["videos_done"] = list(done_ids)
             save_progress(progress)
-            log.info(f"  ✓ Liked: {v['title']}")
+            log.info(f"  ✓ Liked: {v['title']}  (quota used: {quota_tracker['used']}/{quota_tracker['budget']})")
         except googleapiclient.errors.HttpError as e:
             if is_quota_error(e):
-                log.warning(f"  ⚠ Quota exhausted after {ok} liked videos. Resume tomorrow.")
+                log.warning(f"  ⚠ API quota exhausted after {ok} liked videos. Re-run after midnight PT.")
                 log.info(f"  → Progress saved. Re-run tomorrow to continue from where you left off.")
                 raise SystemExit(1)
             else:
@@ -317,43 +341,55 @@ def export_ytmusic_playlists(ytm: YTMusic) -> list[dict]:
 # YOUTUBE MUSIC — IMPORT
 # ─────────────────────────────────────────
 def import_ytmusic_liked_songs(ytm: YTMusic, songs: list[dict]):
-    """Like all songs in the destination YT Music account."""
-    log.info(f"Importing {len(songs)} YT Music liked songs...")
-    ok, failed = 0, 0
+    progress_file = EXPORT_DIR / "ytmusic_songs_done.json"
+    done: set = set(json.load(open(progress_file)) if progress_file.exists() else [])
+
     video_ids = [s["videoId"] for s in songs if s.get("videoId")]
-    # ytmusicapi can batch-rate; do in chunks of 200
-    for i in range(0, len(video_ids), 200):
-        chunk = video_ids[i:i+200]
+    remaining = [v for v in video_ids if v not in done]
+    log.info(f"Importing {len(remaining)} YT Music liked songs ({len(done)} already done, {len(video_ids)} total)...")
+
+    ok, failed = 0, 0
+    for i, vid in enumerate(remaining):
+        title = next((s.get("title", vid) for s in songs if s.get("videoId") == vid), vid)
         try:
-            ytm.rate_songs(chunk, "LIKE")
-            ok += len(chunk)
-            log.info(f"  ✓ Liked songs {i+1}–{i+len(chunk)}")
+            ytm.rate_song(vid, "LIKE")
+            done.add(vid)
+            ok += 1
+            if ok % 50 == 0:
+                log.info(f"  ✓ Liked {ok}/{len(remaining)} songs")
+                json.dump(list(done), open(progress_file, "w"))
         except Exception as e:
-            log.warning(f"  ✗ Batch {i}–{i+len(chunk)} failed: {e}")
-            failed += len(chunk)
+            log.warning(f"  ✗ Song '{title}': {e}")
+            failed += 1
         time.sleep(IMPORT_DELAY)
+
+    json.dump(list(done), open(progress_file, "w"))
     log.info(f"  → YT Music songs: {ok} liked, {failed} failed")
 def import_ytmusic_library_albums(ytm: YTMusic, albums: list[dict]):
-    """Save all albums to the destination YT Music library."""
     log.info(f"Importing {len(albums)} YT Music albums...")
     ok, failed = 0, 0
     for a in albums:
         try:
-            ytm.rate_playlist(a["browseId"], "LIKE")
+            album_data = ytm.get_album(a["browseId"])
+            playlist_id = album_data["audioPlaylistId"]
+            ytm.rate_playlist(playlist_id, "LIKE")
             ok += 1
+            log.info(f"  ✓ Saved album '{a['title']}'")
         except Exception as e:
             log.warning(f"  ✗ Album '{a['title']}': {e}")
             failed += 1
         time.sleep(IMPORT_DELAY)
     log.info(f"  → Albums: {ok} saved, {failed} failed")
 def import_ytmusic_library_artists(ytm: YTMusic, artists: list[dict]):
-    """Subscribe to all artists in the destination YT Music library."""
     log.info(f"Importing {len(artists)} YT Music artists...")
     ok, failed = 0, 0
     for a in artists:
         try:
-            ytm.subscribe_artists([a["channelId"]])
+            artist_data = ytm.get_artist(a["channelId"])
+            uc_channel_id = artist_data["channelId"]
+            ytm.subscribe_artists([uc_channel_id])
             ok += 1
+            log.info(f"  ✓ Subscribed: {a['name']}")
         except Exception as e:
             log.warning(f"  ✗ Artist '{a['name']}': {e}")
             failed += 1
@@ -423,14 +459,19 @@ def main():
     # ── IMPORT ─────────────────────────────
     if mode in ("2", "3"):
         print("\n─── IMPORT (sign in with DESTINATION account) ───\n")
-        # YouTube Data API — destination (write)
         yt_dst = get_youtube_client("token_dest.pkl", SCOPES_WRITE, "DESTINATION")
-        import_subscriptions(yt_dst, load("subscriptions.json"))
-        import_liked_videos(yt_dst,  load("liked_videos.json"))
+        quota_tracker = {"used": 0, "budget": DAILY_QUOTA_BUDGET}
+        log.info(f"Daily quota budget: {quota_tracker['budget']} units (resets midnight PT)")
+        import_subscriptions(yt_dst, load("subscriptions.json"), quota_tracker)
+        import_liked_videos(yt_dst,  load("liked_videos.json"), quota_tracker)
         import_playlists(yt_dst,     load("playlists.json"))
         # YouTube Music — destination
         ytm_dst = get_ytmusic_client("ytmusic_dest_headers.json", "DESTINATION YT Music")
-        import_ytmusic_liked_songs(ytm_dst,    load("ytmusic_liked_songs.json"))
+        songs_to_import = load("ytmusic_liked_songs.json")
+        songs_done_file = EXPORT_DIR / "ytmusic_songs_done.json"
+        songs_done_count = len(json.load(open(songs_done_file))) if songs_done_file.exists() else 0
+        if songs_done_count < len(songs_to_import):
+            import_ytmusic_liked_songs(ytm_dst, songs_to_import)
         import_ytmusic_library_albums(ytm_dst, load("ytmusic_liked_albums.json"))
         import_ytmusic_library_artists(ytm_dst, load("ytmusic_liked_artists.json"))
         import_ytmusic_playlists(ytm_dst,      load("ytmusic_playlists.json"))
