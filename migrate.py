@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YouTube + YouTube Music Account Migrator
-Migrates: subscriptions, liked videos, playlists, YT Music liked songs/albums/artists
+Migrates: subscriptions, playlists, YT Music liked songs/albums/artists
 """
 import os
 import json
@@ -29,7 +29,6 @@ IMPORT_DELAY = 1.5   # seconds between write calls (avoid quota bursts)
 # subscriptions.insert = 50 units, videos.rate = 50 units, playlistItems.insert = 50 units
 # Daily limit = 10,000 units. Quota resets at midnight Pacific Time (PT).
 QUOTA_PER_SUBSCRIPTION = 50
-QUOTA_PER_VIDEO_RATE   = 50
 QUOTA_PER_PLAYLIST_INSERT = 50
 # Conservative budget: use at most 8,000 units per run (leaves buffer for retries / other ops)
 DAILY_QUOTA_BUDGET = 8_000
@@ -86,29 +85,6 @@ def export_subscriptions(yt) -> list[dict]:
             break
     log.info(f"  → {len(subs)} subscriptions")
     return subs
-def export_liked_videos(yt) -> list[dict]:
-    """Export all liked video IDs via the special 'likes' playlist."""
-    log.info("Exporting liked videos...")
-    # Get the 'likes' playlist ID for the authenticated user
-    ch_resp = yt.channels().list(part="contentDetails", mine=True).execute()
-    likes_pl = ch_resp["items"][0]["contentDetails"]["relatedPlaylists"]["likes"]
-    videos, token = [], None
-    while True:
-        resp = yt.playlistItems().list(
-            part="snippet", playlistId=likes_pl, maxResults=50, pageToken=token
-        ).execute()
-        for item in resp.get("items", []):
-            vid = item["snippet"]["resourceId"]
-            if vid.get("kind") == "youtube#video":
-                videos.append({
-                    "videoId": vid["videoId"],
-                    "title":   item["snippet"]["title"],
-                })
-        token = resp.get("nextPageToken")
-        if not token:
-            break
-    log.info(f"  → {len(videos)} liked videos")
-    return videos
 def export_playlists(yt) -> list[dict]:
     """Export all user-created playlists with their video IDs."""
     log.info("Exporting playlists...")
@@ -217,41 +193,6 @@ def import_subscriptions(yt, subs: list[dict], quota_tracker: dict):
 
     log.info(f"  → Subscriptions: {ok} added, {skipped} already existed, {failed} failed")
 
-def import_liked_videos(yt, videos: list[dict], quota_tracker: dict):
-    progress = load_progress()
-    done_ids = set(progress.get("videos_done", []))
-
-    pending = [v for v in videos if v["videoId"] not in done_ids]
-    log.info(f"Importing liked videos: {len(pending)} remaining of {len(videos)} total")
-
-    ok, failed = 0, 0
-    for v in pending:
-        if quota_tracker["used"] + QUOTA_PER_VIDEO_RATE > quota_tracker["budget"]:
-            log.warning(
-                f"  ⚠ Reached daily budget ({quota_tracker['budget']} units) after {ok} liked videos. "
-                f"Re-run after midnight PT to continue."
-            )
-            raise SystemExit(0)
-
-        try:
-            yt.videos().rate(id=v["videoId"], rating="like").execute()
-            quota_tracker["used"] += QUOTA_PER_VIDEO_RATE
-            ok += 1
-            done_ids.add(v["videoId"])
-            progress["videos_done"] = list(done_ids)
-            save_progress(progress)
-            log.info(f"  ✓ Liked: {v['title']}  (quota used: {quota_tracker['used']}/{quota_tracker['budget']})")
-        except googleapiclient.errors.HttpError as e:
-            if is_quota_error(e):
-                log.warning(f"  ⚠ API quota exhausted after {ok} liked videos. Re-run after midnight PT.")
-                log.info(f"  → Progress saved. Re-run tomorrow to continue from where you left off.")
-                raise SystemExit(1)
-            else:
-                log.warning(f"  ✗ Failed ({v['title']}): {e}")
-                failed += 1
-        time.sleep(IMPORT_DELAY)
-
-    log.info(f"  → Liked videos: {ok} liked, {failed} failed")
 def import_playlists(yt, playlists: list[dict]):
     """Recreate all playlists on the destination account."""
     log.info(f"Importing {len(playlists)} playlists...")
@@ -440,10 +381,8 @@ def main():
         # YouTube Data API — source (read-only)
         yt_src = get_youtube_client("token_source.pkl", SCOPES_READ, "SOURCE")
         subs    = export_subscriptions(yt_src)
-        liked   = export_liked_videos(yt_src)
         plists  = export_playlists(yt_src)
         save(subs,   "subscriptions.json")
-        save(liked,  "liked_videos.json")
         save(plists, "playlists.json")
         # YouTube Music — source
         ytm_src = get_ytmusic_client("ytmusic_source_headers.json", "SOURCE YT Music")
@@ -463,7 +402,6 @@ def main():
         quota_tracker = {"used": 0, "budget": DAILY_QUOTA_BUDGET}
         log.info(f"Daily quota budget: {quota_tracker['budget']} units (resets midnight PT)")
         import_subscriptions(yt_dst, load("subscriptions.json"), quota_tracker)
-        import_liked_videos(yt_dst,  load("liked_videos.json"), quota_tracker)
         import_playlists(yt_dst,     load("playlists.json"))
         # YouTube Music — destination
         ytm_dst = get_ytmusic_client("ytmusic_dest_headers.json", "DESTINATION YT Music")

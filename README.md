@@ -1,6 +1,6 @@
 # YouTube & YouTube Music Account Migrator
 
-Migrate subscriptions, liked videos, playlists, and YouTube Music library (liked songs, artists, playlists) from one Google account to another.
+Migrate subscriptions, playlists, and YouTube Music library (liked songs, artists, playlists) from one Google account to another.
 
 ---
 
@@ -9,7 +9,6 @@ Migrate subscriptions, liked videos, playlists, and YouTube Music library (liked
 | Data | Supported |
 |---|---|
 | YouTube subscriptions | ✅ |
-| YouTube liked videos | ✅ |
 | YouTube playlists | ✅ |
 | YT Music liked songs | ✅ |
 | YT Music followed artists | ✅ |
@@ -131,8 +130,8 @@ The YouTube Data API has a **10,000 unit daily quota**. Each write operation (su
 
 | If you have | Days needed |
 |---|---|
-| ≤200 subscriptions + ≤200 liked videos | 1 day |
-| 270 subscriptions + 58 liked videos | 2 days |
+| ≤200 subscriptions | 1 day |
+| 270 subscriptions | 2 days |
 | 500 subscriptions | 3 days |
 
 **The script auto-resumes.** It saves progress to `yt_migration_export/progress.json` after every successful write. If the quota runs out mid-run, just re-run the next day — already-completed items are skipped automatically.
@@ -155,7 +154,6 @@ youtube-migration/
 ├── .gitignore                        ← keeps all secrets out of git
 └── yt_migration_export/
     ├── subscriptions.json            ← exported subscriptions
-    ├── liked_videos.json             ← exported liked videos
     ├── playlists.json                ← exported playlists
     ├── ytmusic_liked_songs.json      ← exported YT Music liked songs
     ├── ytmusic_liked_albums.json     ← exported YT Music liked albums
